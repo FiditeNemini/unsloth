@@ -1,3 +1,4 @@
 [submodule "external/unsloth-zoo"]
 	path = external/unsloth-zoo
-	url = https://github.com/unslothai/unsloth-zoo.git
+	url = https://github.com/FiditeNemini/unsloth-zoo.git
+	branch = mac-hardening
