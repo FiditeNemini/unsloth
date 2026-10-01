@@ -45,6 +45,14 @@ _DEFAULT_LLAMA_PR_FORCE=""
 _DEFAULT_LLAMA_SOURCE="https://github.com/ggml-org/llama.cpp"
 _DEFAULT_LLAMA_TAG="latest"
 _DEFAULT_LLAMA_FORCE_COMPILE_REF="master"
+# macOS never downloads a prebuilt: it builds llama.cpp from source with Metal at
+# a pinned Unsloth mix tag in this fork (upstream bNNNN + the PRs in the fork's
+# scripts/unsloth/pr-set.json, made by scripts/unsloth/make_mix_tag.sh there).
+# The commit pin is checked after cloning, so a moved tag cannot be built.
+# UNSLOTH_LLAMA_SOURCE / UNSLOTH_LLAMA_TAG override these and drop the pin check.
+_DEFAULT_LLAMA_MAC_SOURCE="https://github.com/FiditeNemini/llama.cpp"
+_DEFAULT_LLAMA_MAC_TAG="b11160-mix-a6922cc"
+_DEFAULT_LLAMA_MAC_COMMIT="457b94332494c08fc4073eea1606fb3f39bc1a8b"
 
 # ── Colors (same palette as startup_banner / install_python_stack) ──
 if [ -n "${NO_COLOR:-}" ]; then
@@ -3987,6 +3995,24 @@ _RESOLVED_SOURCE_REF="$_REQUESTED_LLAMA_TAG"
 _RESOLVED_SOURCE_REF_KIND="tag"
 _RESOLVED_LLAMA_TAG="$_REQUESTED_LLAMA_TAG"
 
+# macOS: pinned source build from the fork, never a prebuilt (see the defaults).
+# A PR build (UNSLOTH_LLAMA_PR) keeps its own path below.
+_LLAMA_PINNED_COMMIT=""
+if [ "$_HOST_SYSTEM" = "Darwin" ] && [ -z "$_LLAMA_PR" ]; then
+    _LLAMA_SOURCE="${UNSLOTH_LLAMA_SOURCE:-${_DEFAULT_LLAMA_MAC_SOURCE}}"
+    _LLAMA_SOURCE="${_LLAMA_SOURCE%.git}"
+    _REQUESTED_LLAMA_TAG="${UNSLOTH_LLAMA_TAG:-${_DEFAULT_LLAMA_MAC_TAG}}"
+    # The pin vouches only for the default source and tag.
+    if [ -z "${UNSLOTH_LLAMA_SOURCE:-}" ] && [ -z "${UNSLOTH_LLAMA_TAG:-}" ]; then
+        _LLAMA_PINNED_COMMIT="$_DEFAULT_LLAMA_MAC_COMMIT"
+    fi
+    _RESOLVED_SOURCE_URL="$_LLAMA_SOURCE"
+    _RESOLVED_SOURCE_REF="$_REQUESTED_LLAMA_TAG"
+    _RESOLVED_SOURCE_REF_KIND="tag"
+    _RESOLVED_LLAMA_TAG="$_REQUESTED_LLAMA_TAG"
+    _LLAMA_FORCE_COMPILE=1
+fi
+
 if [ "$_LLAMA_FORCE_COMPILE" = "1" ]; then
     _NEED_LLAMA_SOURCE_BUILD=true
     _SKIP_PREBUILT_INSTALL=true
@@ -4323,6 +4349,9 @@ elif [ -n "$_explicit_llama_source_backend" ] && [ "$_NEED_LLAMA_SOURCE_BUILD" =
     step "llama.cpp" "$_explicit_llama_source_backend was explicitly requested, but this installation requires a source build" "$C_ERR"
     substep "Explicit backend selection requires a matching prebuilt bundle; allow prebuilts or unset UNSLOTH_LLAMA_CPP_BACKEND"
     setup_fail 1 "$_explicit_llama_source_backend was explicitly requested, but this installation requires a source build. Explicit backend selection requires a matching prebuilt bundle."
+elif [ "$_HOST_SYSTEM" = "Darwin" ] && [ -z "$_LLAMA_PR" ]; then
+    verbose_substep "macOS: source build of $_LLAMA_SOURCE @ $_REQUESTED_LLAMA_TAG (Metal)"
+    _NEED_LLAMA_SOURCE_BUILD=true
 elif [ "$_LLAMA_FORCE_COMPILE" = "1" ]; then
     step "llama.cpp" "UNSLOTH_LLAMA_FORCE_COMPILE=1 -- skipping prebuilt" "$C_WARN"
     _NEED_LLAMA_SOURCE_BUILD=true
@@ -4497,6 +4526,24 @@ if [ "$_NEED_LLAMA_SOURCE_BUILD" = true ] && [ -d "$LLAMA_CPP_DIR" ]; then
     python "$SCRIPT_DIR/install_llama_prebuilt.py" \
         --check-existing-install "$LLAMA_CPP_DIR" >/dev/null 2>&1 \
         || _LLAMA_REUSE_EXISTING=false
+fi
+
+# Pinned build: skip only when the installed binary reports the pinned commit.
+# --version prints "(build N, commit <short sha>)"; the short sha must prefix the pin.
+if [ "$_NEED_LLAMA_SOURCE_BUILD" = true ] && \
+   [ -n "$_LLAMA_PINNED_COMMIT" ] && \
+   [ -x "$LLAMA_CPP_DIR/build/bin/llama-server" ] && \
+   [ -x "$LLAMA_CPP_DIR/build/bin/llama-quantize" ]; then
+    _built_commit="$("$LLAMA_CPP_DIR/build/bin/llama-server" --version 2>&1 \
+        | sed -nE 's/.*\(build [0-9]+, commit ([0-9a-f]{7,40})\).*/\1/p' | head -1 || true)"
+    if [ -n "$_built_commit" ] && [ "${_LLAMA_PINNED_COMMIT#"$_built_commit"}" != "$_LLAMA_PINNED_COMMIT" ]; then
+        step "llama.cpp" "already built at $_REQUESTED_LLAMA_TAG; skipping rebuild"
+        ln -sf build/bin/llama-quantize "$LLAMA_CPP_DIR/llama-quantize"
+        if [ "$_RUNTIME_ROOT_IS_CUSTOM" = true ]; then
+            : > "$LLAMA_CPP_DIR/$_STUDIO_OWNED_MARKER" 2>/dev/null || true
+        fi
+        _NEED_LLAMA_SOURCE_BUILD=false
+    fi
 fi
 
 if [ "$_NEED_LLAMA_SOURCE_BUILD" = true ] && \
@@ -4692,6 +4739,14 @@ else
             _CLONE_ARGS+=("${_RESOLVED_SOURCE_URL}.git" "$_BUILD_TMP")
             run_quiet_no_exit "clone llama.cpp" \
                 "${_CLONE_ARGS[@]}" || BUILD_OK=false
+        fi
+
+        if [ "$BUILD_OK" = true ] && [ -n "$_LLAMA_PINNED_COMMIT" ]; then
+            _cloned_commit="$(git -C "$_BUILD_TMP" rev-parse HEAD 2>/dev/null || true)"
+            if [ "$_cloned_commit" != "$_LLAMA_PINNED_COMMIT" ]; then
+                step "llama.cpp" "$_RESOLVED_SOURCE_REF is at ${_cloned_commit:-an unknown commit}, not the pinned $_LLAMA_PINNED_COMMIT -- refusing to build" "$C_ERR"
+                BUILD_OK=false
+            fi
         fi
 
         if [ "$BUILD_OK" = true ]; then
@@ -5014,8 +5069,12 @@ else
         if [ "$BUILD_OK" = true ]; then
             run_quiet_no_exit "build llama-quantize" cmake --build "$_BUILD_TMP/build" --config Release --target llama-quantize -j"$NCPU" || true
             # Best-effort: the DiffusionGemma visual server (an example target, present
-            # on llama.cpp PR #24423). No-op when the diffusion example is not configured.
-            run_quiet_no_exit "build diffusion visual server" cmake --build "$_BUILD_TMP/build" --config Release --target llama-diffusion-gemma-visual-server -j"$NCPU" || true
+            # on llama.cpp PR #24423). Examples are off in the main configure, so turn
+            # them on only when the tree has it, as Unsloth's macOS CI does.
+            if [ -d "$_BUILD_TMP/examples/diffusion-gemma-server" ]; then
+                run_quiet_no_exit "configure diffusion visual server" cmake -S "$_BUILD_TMP" -B "$_BUILD_TMP/build" -DLLAMA_BUILD_EXAMPLES=ON \
+                    && run_quiet_no_exit "build diffusion visual server" cmake --build "$_BUILD_TMP/build" --config Release --target llama-diffusion-gemma-visual-server -j"$NCPU" || true
+            fi
         fi
 
         # Opt-in post-build GPU smoke test (#5854 gap 2). Default off (Blackwell
@@ -5047,7 +5106,10 @@ else
                         run_quiet_no_exit "build llama-server (cpu fallback)" cmake --build "$_BUILD_TMP/build" --config Release --target llama-server -j"$NCPU" || BUILD_OK=false
                         if [ "$BUILD_OK" = true ]; then
                             run_quiet_no_exit "build llama-quantize (cpu fallback)" cmake --build "$_BUILD_TMP/build" --config Release --target llama-quantize -j"$NCPU" || true
-                            run_quiet_no_exit "build diffusion visual server (cpu fallback)" cmake --build "$_BUILD_TMP/build" --config Release --target llama-diffusion-gemma-visual-server -j"$NCPU" || true
+                            if [ -d "$_BUILD_TMP/examples/diffusion-gemma-server" ]; then
+                                run_quiet_no_exit "configure diffusion visual server (cpu fallback)" cmake -S "$_BUILD_TMP" -B "$_BUILD_TMP/build" -DLLAMA_BUILD_EXAMPLES=ON \
+                                    && run_quiet_no_exit "build diffusion visual server (cpu fallback)" cmake --build "$_BUILD_TMP/build" --config Release --target llama-diffusion-gemma-visual-server -j"$NCPU" || true
+                            fi
                         fi
                     else
                         BUILD_OK=false
@@ -5164,6 +5226,27 @@ if [ -n "${WHISPER_SERVER_PATH:-}" ] || [ -n "${UNSLOTH_WHISPER_CPP_PATH:-}" ]; 
     verbose_substep "whisper.cpp: using a user-configured binary/dir; skipping managed install"
 elif [ "${UNSLOTH_SKIP_WHISPER_INSTALL:-0}" = "1" ]; then
     verbose_substep "whisper.cpp: install skipped (UNSLOTH_SKIP_WHISPER_INSTALL=1)"
+elif [ "$_HOST_SYSTEM" = "Darwin" ]; then
+    # macOS builds whisper.cpp from source (Metal), like llama.cpp. The prebuilt is a
+    # slim bundle that links a llama.cpp prebuilt's ggml, which a source build lacks.
+    if [ "$_RUNTIME_ROOT_IS_CUSTOM" = true ]; then
+        _assert_studio_owned_or_absent "$WHISPER_CPP_DIR" "whisper.cpp install" "$_RUNTIME_ROOT_IS_CUSTOM"
+    fi
+    _WHISPER_BUILD="$SCRIPT_DIR/../scripts/build_whisper_cpp.sh"
+    if [ ! -f "$_WHISPER_BUILD" ] || ! command -v cmake >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+        step "whisper.cpp" "skipped (needs git, cmake and scripts/build_whisper_cpp.sh); browser and Transformers dictation remain available" "$C_WARN"
+    else
+        rm -f "$WHISPER_CPP_DIR/UNSLOTH_WHISPER_PREBUILT_INFO.json" 2>/dev/null || true
+        if run_quiet_no_exit "whisper.cpp source build" \
+                env UNSLOTH_HOME="$UNSLOTH_HOME" sh "$_WHISPER_BUILD"; then
+            step "whisper.cpp" "built (Metal)"
+            if [ "$_RUNTIME_ROOT_IS_CUSTOM" = true ] && [ -d "$WHISPER_CPP_DIR" ]; then
+                : > "$WHISPER_CPP_DIR/$_STUDIO_OWNED_MARKER" 2>/dev/null || true
+            fi
+        else
+            step "whisper.cpp" "source build failed; curated whisper.cpp dictation is unavailable; browser and Transformers dictation remain available" "$C_WARN"
+        fi
+    fi
 else
     if [ "$_RUNTIME_ROOT_IS_CUSTOM" = true ]; then
         _assert_studio_owned_or_absent "$WHISPER_CPP_DIR" "whisper.cpp install" "$_RUNTIME_ROOT_IS_CUSTOM"

@@ -118,10 +118,12 @@ These stay as features but call `require(service)` first, and the UI hides/greys
 - **Remote-code third-party sources** (`utils/third_party_source.py`: Spark-TTS, OuteTTS GitHub
   archives): delete, or require pre-installed.
 
-## Phase 4 — No runtime installs
+## Phase 4 — No automatic installs
 
-Runtime `pip`/`uv` installs and binary downloads both leak and execute unreviewed code.
-Replace each with "installed at setup time, or the feature reports it is unavailable":
+Updates stay possible, but only when the user runs them (`unsloth studio update` /
+`setup.sh`), from pinned sources, behind the network policy. What goes is Studio installing
+or downloading things by itself while it runs: that leaks, and executes unreviewed code.
+Replace each of these with "installed at setup time, or the feature reports it is unavailable":
 
 - `studio/backend/utils/mlx_repair.py` (MLX autorepair, default-on) — delete; the installer
   guarantees the MLX stack.
@@ -132,11 +134,47 @@ Replace each with "installed at setup time, or the feature reports it is unavail
   `utils/diffusers_repair.py`, `core/training/worker.py` causal-conv1d self-heal,
   `core/inference/diffusion_families.py`, `unsloth/import_fixes.py`, `unsloth/_auto_install.py`,
   `unsloth_zoo/temporary_patches/fla_vendor.py`, llmcompressor auto-install — delete.
-- llama.cpp: `studio/install_llama_prebuilt.py` + `utils/llama_cpp_update.py` download
-  prebuilts from GitHub. Keep as an **install-time** step only (or build from a pinned source
-  tag with Metal), with checksum pinning; remove in-app update.
-- whisper.cpp / sd.cpp / STT sidecar downloaders (`core/inference/stt_download_worker.py`,
-  `sd_cpp_*`) — same treatment.
+- llama.cpp: **done for macOS** — see "llama.cpp source" below. Still to remove: the prebuilt
+  path in `studio/install_llama_prebuilt.py` and the in-app updater/freshness checks
+  (`utils/llama_cpp_update.py`, `utils/llama_cpp_freshness.py`), which only act on prebuilts.
+- whisper.cpp: **done for macOS** — `setup.sh` builds it from source (Metal) via
+  `scripts/build_whisper_cpp.sh` (upstream `ggml-org/whisper.cpp` tag `v1.9.1`). The
+  prebuilt was a slim bundle linked against a llama.cpp prebuilt's ggml, so it cannot pair
+  with a source-built llama.cpp anyway. Open: pin a commit SHA, or fork whisper.cpp too.
+- sd.cpp / STT sidecar downloaders (`core/inference/stt_download_worker.py`, `sd_cpp_*`) —
+  same treatment.
+
+### llama.cpp source
+
+macOS builds llama.cpp from source with Metal, never from a prebuilt. The source is
+**FiditeNemini/llama.cpp**, at a pinned *Unsloth mix* tag:
+
+- Unsloth ships llama.cpp as upstream `bNNNN` + PRs pinned in `scripts/unsloth/pr-set.json`
+  (new architectures, the IQ1_XS/XXS/XXXS quants, perf fixes), merged in CI and released only
+  as binaries. The merged source is never pushed anywhere.
+- `scripts/unsloth/make_mix_tag.sh` (on the fork's `unsloth-tools` branch, which tracks
+  `unslothai/llama.cpp` master) runs the same merge locally and tags it with the same name
+  Unsloth's release uses (`bNNNN-mix-<pr-set hash>`), plus a commit pinning
+  `BUILD_NUMBER` to the base so `llama-server --version` reports `build NNNN`.
+- `studio/setup.sh` defaults (`_DEFAULT_LLAMA_MAC_SOURCE/_TAG/_COMMIT`): clones the tag,
+  **refuses to build unless HEAD is the pinned commit**, builds `llama-server`,
+  `llama-quantize` and the DiffusionGemma visual server with Metal, and skips the rebuild
+  when the installed binary already reports the pinned commit.
+  `UNSLOTH_LLAMA_SOURCE` / `UNSLOTH_LLAMA_TAG` override (and drop the pin check).
+
+Current pin: `b11160-mix-a6922cc` @ `457b94332494c08fc4073eea1606fb3f39bc1a8b`.
+
+To move to a newer mix (in the llama.cpp clone):
+
+```bash
+git switch unsloth-tools && git fetch unsloth && git merge unsloth/master   # new pr-set.json
+scripts/unsloth/make_mix_tag.sh            # or a specific base: make_mix_tag.sh b11200
+git push origin unsloth-tools <tag>
+```
+
+then set `_DEFAULT_LLAMA_MAC_TAG` / `_DEFAULT_LLAMA_MAC_COMMIT` in `studio/setup.sh` to the
+printed tag and SHA. Merge commits carry timestamps, so re-running the script yields a
+different SHA: pin the one that was pushed.
 
 ## Phase 5 — Frontend and desktop shell
 
