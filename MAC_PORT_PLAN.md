@@ -138,9 +138,7 @@ Replace each of these with "installed at setup time, or the feature reports it i
   path in `studio/install_llama_prebuilt.py` and the in-app updater/freshness checks
   (`utils/llama_cpp_update.py`, `utils/llama_cpp_freshness.py`), which only act on prebuilts.
 - whisper.cpp: **done for macOS** — `setup.sh` builds it from source (Metal) via
-  `scripts/build_whisper_cpp.sh` (upstream `ggml-org/whisper.cpp` tag `v1.9.1`). The
-  prebuilt was a slim bundle linked against a llama.cpp prebuilt's ggml, so it cannot pair
-  with a source-built llama.cpp anyway. Open: pin a commit SHA, or fork whisper.cpp too.
+  `scripts/build_whisper_cpp.sh`; see "whisper.cpp source" below.
 - sd.cpp / STT sidecar downloaders (`core/inference/stt_download_worker.py`, `sd_cpp_*`) —
   same treatment.
 
@@ -174,7 +172,34 @@ git push origin unsloth-tools <tag>
 
 then set `_DEFAULT_LLAMA_MAC_TAG` / `_DEFAULT_LLAMA_MAC_COMMIT` in `studio/setup.sh` to the
 printed tag and SHA. Merge commits carry timestamps, so re-running the script yields a
-different SHA: pin the one that was pushed.
+different SHA: pin the one that was pushed. Then rebuild the whisper.cpp tag below on the new
+llama tag, so the two keep sharing one ggml.
+
+### whisper.cpp source
+
+Unsloth's whisper.cpp has no source patches: its "slim" prebuilds are upstream `vX.Y.Z` with
+`ggml/` replaced by the paired llama.cpp mix's ggml, linked at runtime against the llama
+prebuilt's ggml dylibs. The source equivalent lives in **FiditeNemini/whisper.cpp**:
+
+- `scripts/unsloth/make_ggml_tag.sh <whisper tag> <llama tag>` (fork's `unsloth-tools`
+  branch, tracking `unslothai/whisper.cpp` master) commits that ggml swap onto the upstream
+  tag and tags it `<whisper tag>-ggml-<llama tag>`.
+- `scripts/build_whisper_cpp.sh` defaults to that tag, refuses to build unless HEAD is the
+  pinned commit, builds a static `whisper-server` (its own copy of the shared ggml source, so
+  the two installs cannot break each other), and skips the build when the stamped commit of
+  the installed binary matches. `WHISPER_CPP_SOURCE` / `WHISPER_CPP_TAG` override.
+
+Current pin: `v1.9.4-ggml-b11160-mix-a6922cc` @ `8358c3d153d022028ef0a137a2167dc18032daf6`.
+
+To move (in the whisper.cpp clone, after the llama.cpp tag is pushed):
+
+```bash
+scripts/unsloth/make_ggml_tag.sh v1.9.4 <new llama tag>
+git push origin unsloth-tools <tag>
+```
+
+then set `_DEFAULT_WHISPER_CPP_TAG` / `_DEFAULT_WHISPER_CPP_COMMIT` in
+`scripts/build_whisper_cpp.sh`.
 
 ## Phase 5 — Frontend and desktop shell
 
