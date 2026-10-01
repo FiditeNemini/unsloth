@@ -406,25 +406,10 @@ def _architecture_cannot_come_from_transformers(
 
 
 def latest_transformers_supports(model_type: str) -> dict | None:
-    """Whether the newest transformers (PyPI release and/or GitHub main) ships *model_type*.
-
-    Returns ``{"pypi_version": str, "supported_in_pypi": bool, "supported_in_main": bool}``
-    or None when the answer is unavailable (offline, kill switch, network failure) — the
-    caller must then fall through to current behavior. Cached (memory + JSON snapshot on
-    disk, ttl ~1 day) so repeated tier resolutions never re-fetch.
-    """
-    if not isinstance(model_type, str) or not model_type:
-        return None
-    if _disabled() or _env_offline():
-        return None
-    snapshot = _get_snapshot()
-    if snapshot is None:
-        return None
-    return {
-        "pypi_version": snapshot["pypi_version"],
-        "supported_in_pypi": model_type in set(snapshot["pypi_model_types"]),
-        "supported_in_main": model_type in set(snapshot["main_model_types"]),
-    }
+    """Whether the newest transformers ships *model_type*: never known, because Studio does not ask
+    PyPI or GitHub. None makes every caller fall through to current routing, so an unrecognised
+    architecture fails the way it would with no upgrade path, and no install is offered."""
+    return None
 
 
 # model_types the hardcoded tier tables already route; never remote-check these.

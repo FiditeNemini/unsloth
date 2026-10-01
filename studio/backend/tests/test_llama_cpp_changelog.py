@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import http.client
 import sys
 import time
 from pathlib import Path
@@ -139,38 +138,10 @@ def test_delta_reports_no_changes_when_target_drops_every_carried_pr(monkeypatch
     assert result["total_changes"] == 0
 
 
-def test_invalid_repo_never_reaches_github(monkeypatch):
-    called = False
-
-    def fail(*_args, **_kwargs):
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(changes, "auth_safe_open", fail)
-
-    assert changes._fetch_release("owner/repository/extra", "b1") is None
-    assert called is False
-
-
 def test_cpp_identifiers_keep_literal_underscores():
     entry = changes._entry("ggml-cuda: keep ROCm_Host and GGML_CUDA_ENABLE_UNIFIED_MEMORY=0")
 
     assert entry["summary"] == ("ggml-cuda: keep ROCm_Host and GGML_CUDA_ENABLE_UNIFIED_MEMORY=0")
-
-
-def test_repo_with_a_dot_segment_never_reaches_github(monkeypatch):
-    # "." is in the repo character class, so "owner/.." passed the shape check.
-    called = False
-
-    def fail(*_args, **_kwargs):
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(changes, "auth_safe_open", fail)
-
-    for repo in ("../etc", "owner/..", "..", "../rate_limit"):
-        assert changes._fetch_release(repo, "b1") is None
-    assert called is False
 
 
 def test_pull_and_issue_urls_share_one_identity_namespace():
@@ -350,34 +321,16 @@ def test_a_bodyless_target_is_transient_not_permanent(monkeypatch):
     )
 
 
-def test_a_truncated_response_does_not_escape_to_the_caller(monkeypatch):
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self, size = -1):
-            raise http.client.IncompleteRead(b"partial")
-
-    monkeypatch.setattr(changes, "auth_safe_open", lambda *_a, **_k: _Response())
-
-    # IncompleteRead is an HTTPException, not an OSError.
-    assert changes._fetch_release_blocking("unslothai/llama.cpp", "b1", 5.0) is None
 
 
-def test_an_oversized_release_body_is_rejected(monkeypatch):
-    class _Response:
-        def __enter__(self):
-            return self
+def test_release_notes_are_never_fetched(monkeypatch):
+    """Studio does not contact GitHub: a release lookup answers "unavailable" without a connection."""
+    import socket
+    import urllib.request
 
-        def __exit__(self, *_args):
-            return False
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the changelog touched the network")
 
-        def read(self, size = -1):
-            return b"x" * (changes.MAX_RELEASE_BYTES + 1)
-
-    monkeypatch.setattr(changes, "auth_safe_open", lambda *_a, **_k: _Response())
-
-    assert changes._fetch_release_blocking("unslothai/llama.cpp", "b1", 5.0) is None
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    assert changes._fetch_release("unslothai/llama.cpp", "b11160") is None

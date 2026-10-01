@@ -1403,14 +1403,7 @@ def _add_lower_only(mapper, key, value):
 
 
 def build_mappers(__INT_TO_FLOAT_MAPPER):
-    """ Derives the five lookup tables from the one source table.
-
-    A function rather than module-level statements so `loader_utils._get_new_mapper`
-    can run it over a *newer* `__INT_TO_FLOAT_MAPPER` parsed out of the mapper.py on
-    GitHub main. That probe used to `exec` the fetched file; going through here means
-    the fetched text only ever supplies data, and the derivation is this installed
-    version's code.
-    """
+    """ Derives the five lookup tables from the one source table. """
     INT_TO_FLOAT_MAPPER  = {}
     FLOAT_TO_INT_MAPPER  = {}
     MAP_TO_UNSLOTH_16bit = {}

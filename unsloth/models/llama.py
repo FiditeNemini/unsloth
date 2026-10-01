@@ -2434,9 +2434,6 @@ class FastLlamaModel:
             os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
         model_patcher.pre_patch()
-        # A download counter, to see whether environments are breaking or HF is down.
-        get_statistics(kwargs.get("local_files_only", False))
-
         if dtype is None:
             dtype = torch.float16 if not SUPPORTS_BFLOAT16 else torch.bfloat16
         elif dtype == torch.bfloat16 and not SUPPORTS_BFLOAT16:

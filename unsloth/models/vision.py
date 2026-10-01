@@ -1387,9 +1387,6 @@ class FastBaseModel:
         if old_hf_transfer != "0":
             os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-        # A download counter, to see whether environments are breaking or HF is down.
-        get_statistics(kwargs.get("local_files_only", False))
-
         # The base plus tokenizer prefetch runs AFTER the load-mode validation below, so an invalid load_in_* combination fails without first downloading a snapshot.
 
         # Whether float32 was asked for rather than arrived at by upcasting: only an explicit request may suppress the V100/T4 float16 autocast (#4082).

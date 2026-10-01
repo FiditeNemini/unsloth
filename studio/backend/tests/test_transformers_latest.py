@@ -254,25 +254,18 @@ class TestFetchRemoteModelTypes:
 
 
 class TestLatestTransformersSupports:
-    def test_supported_in_pypi(self, monkeypatch):
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        result = latest_transformers_supports("brandnew_arch")
-        assert result == {
-            "pypi_version": "5.13.0",
-            "supported_in_pypi": True,
-            "supported_in_main": True,
-        }
+    def test_never_known_and_never_fetched(self, monkeypatch):
+        """Studio does not ask PyPI or GitHub: every answer is None, with no connection made."""
+        import socket
+        import urllib.request
 
-    def test_dev_only_arch_reported_main_only(self, monkeypatch):
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        result = latest_transformers_supports("dev_only_arch")
-        assert result["supported_in_pypi"] is False
-        assert result["supported_in_main"] is True
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("the transformers lookup touched the network")
 
-    def test_unknown_everywhere(self, monkeypatch):
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        result = latest_transformers_supports("no_such_arch")
-        assert result["supported_in_pypi"] is False and result["supported_in_main"] is False
+        monkeypatch.setattr(urllib.request, "urlopen", refuse)
+        monkeypatch.setattr(socket, "getaddrinfo", refuse)
+        for model_type in ("brandnew_arch", "llama", "qwen3_moe"):
+            assert latest_transformers_supports(model_type) is None
 
     def test_network_failure_returns_none(self, monkeypatch):
         _no_network(monkeypatch, exc = OSError("down"))
@@ -289,42 +282,6 @@ class TestLatestTransformersSupports:
         calls = _no_network(monkeypatch)
         assert latest_transformers_supports("brandnew_arch") is None
         assert calls["n"] == 0
-
-    def test_memory_cache_hit_avoids_refetch(self, monkeypatch):
-        counter = {}
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory(counter))
-        latest_transformers_supports("brandnew_arch")
-        first_total = counter["__total__"]
-        latest_transformers_supports("some_other_arch")
-        assert counter["__total__"] == first_total
-
-    def test_disk_cache_survives_restart(self, monkeypatch):
-        counter = {}
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory(counter))
-        latest_transformers_supports("brandnew_arch")
-        # Simulate a restart: memory gone, disk snapshot stays, network unavailable.
-        tl.clear_caches()
-        _no_network(monkeypatch)
-        result = latest_transformers_supports("brandnew_arch")
-        assert result is not None and result["supported_in_pypi"] is True
-
-    def test_expired_snapshot_refetches(self, monkeypatch):
-        counter = {}
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory(counter))
-        latest_transformers_supports("brandnew_arch")
-        stale = dict(tl._memory_snapshot, fetched_at = time.time() - tl._CACHE_TTL_SECONDS - 1)
-        tl.clear_caches()
-        tl._save_snapshot_file(stale)
-        first_total = counter["__total__"]
-        latest_transformers_supports("brandnew_arch")
-        assert counter["__total__"] > first_total
-
-    def test_corrupt_disk_cache_ignored(self, monkeypatch, tmp_path: Path):
-        counter = {}
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory(counter))
-        tl._cache_file().write_text("{not json", encoding = "utf-8")
-        result = latest_transformers_supports("brandnew_arch")
-        assert result is not None and counter["__total__"] > 0
 
     def test_failure_backoff_skips_immediate_retry(self, monkeypatch):
         calls = {"n": 0}
@@ -367,23 +324,6 @@ def _fake_overlays(monkeypatch, overlays = None):
 
 
 class TestCheckUpgradeForModel:
-    def test_unknown_type_supported_in_pypi_signals(self, tmp_path: Path, monkeypatch):
-        _fake_overlays(monkeypatch)
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        result = check_upgrade_for_model(_local_model(tmp_path, "brandnew_arch"))
-        assert result == {
-            "model_type": "brandnew_arch",
-            "pypi_version": "5.13.0",
-            "supported_in_pypi": True,
-            "supported_in_main": True,
-        }
-
-    def test_dev_only_type_signals_main_only(self, tmp_path: Path, monkeypatch):
-        _fake_overlays(monkeypatch)
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        result = check_upgrade_for_model(_local_model(tmp_path, "dev_only_arch"))
-        assert result["supported_in_pypi"] is False and result["supported_in_main"] is True
-
     def test_unknown_everywhere_falls_through(self, tmp_path: Path, monkeypatch):
         _fake_overlays(monkeypatch)
         monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
@@ -438,15 +378,6 @@ class TestCheckUpgradeForModel:
         d.mkdir()
         (d / "config.json").write_text(json.dumps({"architectures": ["Whatever"]}))
         assert check_upgrade_for_model(str(d)) is None
-
-    def test_nested_model_type_is_used(self, tmp_path: Path, monkeypatch):
-        _fake_overlays(monkeypatch)
-        monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen_factory({}))
-        d = tmp_path / "nested"
-        d.mkdir()
-        (d / "config.json").write_text(json.dumps({"text_config": {"model_type": "brandnew_arch"}}))
-        result = check_upgrade_for_model(str(d))
-        assert result is not None and result["model_type"] == "brandnew_arch"
 
     def test_never_raises_on_internal_error(self, monkeypatch):
         monkeypatch.setattr(

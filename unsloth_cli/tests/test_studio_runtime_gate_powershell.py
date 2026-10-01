@@ -121,16 +121,11 @@ def test_the_profile_probe_falls_back_to_the_resolved_interpreter(monkeypatch, t
 
 def test_the_launcher_refresh_spawns_the_resolved_interpreter(monkeypatch, tmp_path):
     """update() ends in _refresh_desktop_shortcuts. It degrades instead of crashing, so a bare
-    name silently drops the refresh -- after fetching an installer it cannot launch either."""
+    name silently drops the refresh."""
     studio = _windows_studio(monkeypatch)
     installer = tmp_path / "install.ps1"
     installer.write_text("")
     monkeypatch.setattr(studio, "_installers_on_disk", lambda candidates: [installer])
-    monkeypatch.setattr(
-        studio,
-        "_fetch_installer",
-        lambda *a, **k: pytest.fail("a launchable installer was on disk"),
-    )
 
     spawned = []
 
@@ -147,7 +142,7 @@ def test_the_launcher_refresh_spawns_the_resolved_interpreter(monkeypatch, tmp_p
 
 
 @pytest.mark.parametrize("interactive", [False, True], ids = ["redirected", "console"])
-@pytest.mark.parametrize("flow", ["setup", "local-refresh", "fetched-refresh"])
+@pytest.mark.parametrize("flow", ["setup", "local-refresh"])
 def test_windows_launch_uses_process_flags_without_windowstyle(
     monkeypatch, tmp_path, interactive, flow
 ):
@@ -169,14 +164,10 @@ def test_windows_launch_uses_process_flags_without_windowstyle(
     setup_script.write_text("", encoding = "utf-8")
     installer = repo_root / "install.ps1"
     installer.write_text("", encoding = "utf-8")
-    fetched = b"Write-Output 'refresh'"
     spawned = []
 
     def capture(argv, **kwargs):
         spawned.append((list(argv), kwargs))
-        if "-File" in argv:
-            path = Path(argv[argv.index("-File") + 1])
-            assert path.read_bytes() == b"\xef\xbb\xbf" + fetched
         return _Process()
 
     monkeypatch.setattr(studio.subprocess, "Popen", capture)
@@ -184,12 +175,7 @@ def test_windows_launch_uses_process_flags_without_windowstyle(
     if flow == "setup":
         studio._run_setup_script(repo_root = repo_root)
     else:
-        monkeypatch.setattr(
-            studio,
-            "_installers_on_disk",
-            lambda candidates: [installer] if flow == "local-refresh" else [],
-        )
-        monkeypatch.setattr(studio, "_fetch_installer", lambda *a, **kw: fetched)
+        monkeypatch.setattr(studio, "_installers_on_disk", lambda candidates: [installer])
         studio._refresh_desktop_shortcuts()
 
     assert len(spawned) == 1
@@ -206,18 +192,13 @@ def test_windows_launch_uses_process_flags_without_windowstyle(
         assert "-NonInteractive" in argv
         assert "-NoLogo" in argv
         assert kwargs["creationflags"] & 0x08000000
-    if flow == "fetched-refresh":
-        script_path = Path(argv[argv.index("-File") + 1])
-        assert argv[-1] == "--shortcuts-only"
-        assert not script_path.exists()
+    script = setup_script if flow == "setup" else installer
+    quoted = str(script).replace("'", "''")
+    command = argv[argv.index("-Command") + 1]
+    assert f"& '{quoted}'" in command
+    assert command.endswith("*>&1")
+    if flow == "local-refresh":
+        assert "--shortcuts-only" in command
     else:
-        script = setup_script if flow == "setup" else installer
-        quoted = str(script).replace("'", "''")
-        command = argv[argv.index("-Command") + 1]
-        assert f"& '{quoted}'" in command
-        assert command.endswith("*>&1")
-        if flow == "local-refresh":
-            assert "--shortcuts-only" in command
-        else:
-            assert "stdout" in kwargs
-            assert "stderr" in kwargs
+        assert "stdout" in kwargs
+        assert "stderr" in kwargs

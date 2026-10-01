@@ -4,11 +4,11 @@
 """Regression for #8868: a wildcard bind (``-H 0.0.0.0``) must not hand a
 device on the LAN the machine's public WAN IP.
 
-``_resolve_external_ip()`` (used for the reachability probe and the
-Cloudflare line) can return a public address from ``ifconfig.me`` or the GCE
-metadata server. ``_network_share_host_for_bind()`` is the LAN-only answer --
-no third-party network call -- and is what the "another device on your
-network" banner line and ``app.state.server_url`` must use instead.
+``_resolve_external_ip()`` (used for the reachability note and the Cloudflare
+line) is the default route's own address; it used to ask ``ifconfig.me`` and the
+GCE metadata server, and no longer asks anyone. ``_network_share_host_for_bind()``
+is the LAN-only answer and is what the "another device on your network" banner
+line and ``app.state.server_url`` must use.
 """
 
 import logging
@@ -47,7 +47,7 @@ class _FakeSocket:
 
 @pytest.fixture
 def public_and_lan(monkeypatch):
-    """ifconfig.me answers with a public IP; the LAN socket trick answers separately."""
+    """A public-IP service that WOULD answer if asked; the LAN socket trick answers separately."""
 
     def _urlopen(req, *args, **kwargs):
         class _Resp:
@@ -67,7 +67,6 @@ def public_and_lan(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
     monkeypatch.setattr(socket, "socket", lambda *a, **k: _FakeSocket())
-    monkeypatch.delenv(run.DISABLE_PUBLIC_CHECK_ENV, raising = False)
 
 
 # ── resolution ───────────────────────────────────────────────────────
@@ -83,8 +82,9 @@ def test_resolve_lan_ip_never_calls_the_network(public_and_lan, monkeypatch):
     assert _resolve_lan_ip() == LAN_IP
 
 
-def test_external_ip_prefers_the_public_service(public_and_lan):
-    assert run._resolve_external_ip() == PUBLIC_IP
+def test_external_ip_never_asks_a_public_service(public_and_lan):
+    # ifconfig.me would have answered PUBLIC_IP; the route lookup is the only source now.
+    assert run._resolve_external_ip() == LAN_IP
 
 
 def test_network_share_host_is_lan_not_public(monkeypatch):

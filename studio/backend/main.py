@@ -488,23 +488,16 @@ def _start_helper_precache_if_enabled() -> None:
 
 
 def _run_llama_cpp_startup_probes(app: FastAPI) -> None:
-    """llama.cpp capability (MTP support) + freshness (release age) probes, run OFF the startup critical path.
-    Both are cached and freshness has a 24h disk TTL, but on a cold/expired cache the freshness check makes
-    a blocking GitHub request, and on macOS the first `llama-server --help` exec can stall on Gatekeeper
-    verification, and neither must gate `Application startup complete`. Writes app.state only; nothing reads
-    those values synchronously at startup."""
+    """llama.cpp capability (MTP support) probe, run OFF the startup critical path: on macOS the first
+    `llama-server --help` exec can stall on Gatekeeper verification, and that must not gate `Application
+    startup complete`. Local only (there is no release-freshness lookup). Writes app.state only; nothing
+    reads it synchronously at startup."""
     try:
         from core.inference.llama_cpp import LlamaCppBackend
-        from utils.llama_cpp_freshness import (
-            check_prebuilt_freshness,
-            format_stale_warning,
-        )
 
         _bin = LlamaCppBackend._find_llama_server_binary()
         _caps = LlamaCppBackend.probe_server_capabilities(_bin)
         app.state.llama_cpp_capabilities = _caps
-        _freshness = check_prebuilt_freshness(_bin)
-        app.state.llama_cpp_freshness = _freshness
 
         import structlog as _structlog
 
@@ -521,21 +514,13 @@ def _run_llama_cpp_startup_probes(app: FastAPI) -> None:
             )
             _log.warning(_msg)
             print(f"WARNING: {_msg}", flush = True)
-        if _freshness.get("stale"):
-            _msg = format_stale_warning(_freshness)
-            _log.warning(_msg)
-            print(f"WARNING: {_msg}", flush = True)
     except Exception as _probe_exc:
         import structlog as _structlog
         _structlog.get_logger(__name__).debug("llama.cpp startup probes failed: %s", _probe_exc)
 
 
 def _start_llama_cpp_probes_if_enabled(app: FastAPI) -> None:
-    """Run the llama.cpp startup probes on a daemon thread, off the startup critical path. Skipped entirely
-    when update checks are disabled, so a fully offline boot makes no background network calls."""
-    if os.environ.get("UNSLOTH_DISABLE_UPDATE_CHECK") == "1":
-        return
-
+    """Run the llama.cpp startup probe on a daemon thread, off the startup critical path."""
     threading.Thread(
         target = _run_llama_cpp_startup_probes,
         args = (app,),

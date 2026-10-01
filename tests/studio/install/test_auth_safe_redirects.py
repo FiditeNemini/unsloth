@@ -23,8 +23,6 @@ sys.path.insert(0, str(STUDIO / "backend"))
 
 import install_sd_cpp_prebuilt as sd
 import prebuilt_core
-from utils import llama_cpp_changelog
-from utils.prebuilt import freshness_flow
 
 TOKEN = "Bearer issue-11103-test-token"
 
@@ -146,23 +144,17 @@ def fetch(client, url, monkeypatch):
         request = original_request(url, headers = {"Authorization": TOKEN})
         with prebuilt_core._URL_OPENER.open(request, timeout = 3) as response:
             return json.load(response)
-    if client == "freshness":
-        return freshness_flow._fetch_newest_published_release_blocking(
-            "owner/repo", 3, log_message = "redirect test"
-        )
-    if client == "changelog":
-        return llama_cpp_changelog._fetch_release_blocking("owner/repo", "v1", 3)
     return sd._fetch_release("v1", repo = "owner/repo", timeout = 3)
 
 
-@pytest.mark.parametrize("client", ["prebuilt", "freshness", "changelog", "sd"])
+@pytest.mark.parametrize("client", ["prebuilt", "sd"])
 @pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
 @pytest.mark.parametrize(
     "target", ["same_origin", "other_host", "other_port", "return", "downgrade"]
 )
 def test_release_redirect_credentials(client, code, target, servers, monkeypatch):
     release = {"tag_name": "v1", "published_at": "2026-01-01T00:00:00Z"}
-    payload = [release] if client == "freshness" else release
+    payload = release
     source = servers(payload = payload)
     source.code = code
     destination = (
@@ -268,11 +260,11 @@ def test_an_unparseable_redirect_port_strips_rather_than_raising(start, target):
     assert request.get_header("Authorization") == TOKEN
 
 
-@pytest.mark.parametrize("client", ["prebuilt", "freshness", "changelog", "sd"])
+@pytest.mark.parametrize("client", ["prebuilt", "sd"])
 def test_an_unparseable_redirect_port_stays_soft_for_every_client(client, servers, monkeypatch):
     """The same case end to end: no ValueError reaches the caller."""
     release = {"tag_name": "v1", "published_at": "2026-01-01T00:00:00Z"}
-    source = servers(payload = [release] if client == "freshness" else release)
+    source = servers(payload = release)
     source.redirects["/start"] = "https://127.0.0.1:99999/final"
     # No ValueError arm: it must not be raised, so letting it escape fails the test.
     try:

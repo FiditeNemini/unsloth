@@ -138,17 +138,6 @@ from utils.host_policy import (
 
 logger = get_logger(__name__)
 
-DISABLE_PUBLIC_CHECK_ENV = "UNSLOTH_STUDIO_DISABLE_PUBLIC_CHECK"
-
-
-def public_check_disabled() -> bool:
-    """True when the operator has turned off the third-party startup lookups. On a wildcard bind Unsloth
-    asks ifconfig.me for the public IP and check-host.net whether the port is reachable; both tell an
-    outside service this machine is running one, which lab and privacy-sensitive deployments do not
-    want (#7307 Problem 8)."""
-    return os.environ.get(DISABLE_PUBLIC_CHECK_ENV, "").strip().lower() in {"1", "true", "yes"}
-
-
 def _resolve_lan_ip(ip_version: int = 4) -> str:
     """This machine's own LAN-facing address, with no third-party network call: a UDP route lookup plus
     the active interfaces, and the lookup only fixes the local end of the socket."""
@@ -164,40 +153,14 @@ def _resolve_lan_ip(ip_version: int = 4) -> str:
 
 
 def _resolve_external_ip() -> str:
-    """Resolve the machine's external IP address: GCE metadata server, then ifconfig.me (skipped by
-    UNSLOTH_STUDIO_DISABLE_PUBLIC_CHECK), then the default route's own source address. This is the
-    INTERNET-facing address, used for the reachability probe and the Cloudflare messaging, not for
-    "another device on your network", which _network_share_host_for_bind answers. The fallback stays
-    a raw route lookup rather than _resolve_lan_ip, which filters out every address a LAN peer
-    cannot open (WSL's NAT side, link-local): right for an address we advertise, wrong for a last
-    resort."""
+    """The address this machine's default route uses, found locally: no metadata server, no public-IP
+    service. Used for the reachability note and the Cloudflare messaging, not for "another device on
+    your network", which _network_share_host_for_bind answers. A raw route lookup rather than
+    _resolve_lan_ip, which filters out every address a LAN peer cannot open (WSL's NAT side,
+    link-local): right for an address we advertise, wrong here."""
     import socket
-    import urllib.request
 
-    # 1. GCE metadata server (<10ms on GCE, times out fast elsewhere).
-    try:
-        req = urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip",
-            headers = {"Metadata-Flavor": "Google"},
-        )
-        with urllib.request.urlopen(req, timeout = 1) as resp:
-            ip = resp.read().decode().strip()
-            if ip:
-                return ip
-    except Exception:
-        pass
-
-    # 2. Public IP service. Third-party, so skippable; the LAN address below still works.
-    if not public_check_disabled():
-        try:
-            with urllib.request.urlopen("https://ifconfig.me", timeout = 3) as resp:
-                ip = resp.read().decode().strip()
-                if ip:
-                    return ip
-        except Exception:
-            pass
-
-    # 3. Fallback: the source address the default route picks. A UDP connect only
+    # The source address the default route picks. A UDP connect only
     # fixes the local end of the socket; nothing is sent to the target.
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -347,158 +310,34 @@ def _print_localhost_ipv6_mismatch_warning(local_url: str, port: int) -> None:
 
 
 def _verify_global_reachability(display_host: str, port: int) -> None:
-    """Probe check-host.net to confirm display_host:port is reachable from the public internet. Synchronous so
-    output lands between the banner URLs and the stop hint. Bounded at ~15s; failures swallowed (verifier
-    failing is not Unsloth failing). Only meaningful for a wildcard bind, and skipped entirely by
-    UNSLOTH_STUDIO_DISABLE_PUBLIC_CHECK."""
+    """Classify display_host locally: a private/LAN address is not reachable from the internet, so say so.
+    Anything else stays unknown; nothing is asked of a third party."""
     global _public_reachable
-    # Reset to "unknown" each run; set True/False only when the probe decides.
+    # Reset to "unknown" each run; a public address stays unknown, since confirming it would mean
+    # asking a third party to connect.
     _public_reachable = None
     import ipaddress
-    import json
-    import time
-    import urllib.error
-    import urllib.parse
-    import urllib.request
 
     if not display_host or is_wildcard_host(display_host):
         return
 
     use_color = _stdout_color_ok()
     dim = "\033[38;5;245m" if use_color else ""
-    ok_c = "\033[38;5;120;1m" if use_color else ""
-    err_c = "\033[38;5;203;1m" if use_color else ""
-    warn_c = "\033[38;5;215;1m" if use_color else ""
-    local_url_c = "\033[38;5;108;1m" if use_color else ""
     reset = "\033[0m" if use_color else ""
-
-    url = f"http://{_url_host(display_host)}:{port}"
 
     # Private/loopback/link-local addresses aren't globally routable.
     try:
         addr = ipaddress.ip_address(display_host)
-        if addr.is_loopback or addr.is_private or addr.is_link_local:
-            _public_reachable = False
-            print(
-                f"{dim}  Note: {display_host} is a private/LAN address -- "
-                f"reachable on this network only, not from the public internet."
-                f"{reset}",
-                flush = True,
-            )
-            return
     except ValueError:
-        pass
-
-    # The probe hands display_host:port to a third party and asks it to connect.
-    if public_check_disabled():
-        logger.debug("Skipping the check-host.net probe (%s).", DISABLE_PUBLIC_CHECK_ENV)
         return
-
-    try:
-        qs = urllib.parse.urlencode({"host": f"{_url_host(display_host)}:{port}", "max_nodes": 3})
-        req = urllib.request.Request(
-            f"https://check-host.net/check-tcp?{qs}",
-            headers = {
-                "Accept": "application/json",
-                "User-Agent": "unsloth-studio-reachability/1",
-            },
+    if addr.is_loopback or addr.is_private or addr.is_link_local:
+        _public_reachable = False
+        print(
+            f"{dim}  Note: {display_host} is a private/LAN address -- "
+            f"reachable on this network only, not from the public internet."
+            f"{reset}",
+            flush = True,
         )
-        with urllib.request.urlopen(req, timeout = 5) as resp:
-            init = json.loads(resp.read().decode("utf-8", errors = "replace"))
-        req_id = init.get("request_id")
-        if not req_id:
-            return
-
-        results = {}
-        deadline = time.monotonic() + 15.0
-        poll_req = urllib.request.Request(
-            f"https://check-host.net/check-result/{req_id}",
-            headers = {
-                "Accept": "application/json",
-                "User-Agent": "unsloth-studio-reachability/1",
-            },
-        )
-        while time.monotonic() < deadline:
-            time.sleep(1.5)
-            try:
-                with urllib.request.urlopen(poll_req, timeout = 5) as resp:
-                    results = json.loads(resp.read().decode("utf-8", errors = "replace"))
-            except Exception:
-                continue
-            if results and all(v is not None for v in results.values()):
-                break
-            decisive = [
-                v
-                for v in results.values()
-                if isinstance(v, list)
-                and v
-                and isinstance(v[0], dict)
-                and ("time" in v[0] or "error" in v[0])
-            ]
-            if len(decisive) >= 2:
-                break
-
-        ok_nodes = err_nodes = 0
-        for v in results.values():
-            if not isinstance(v, list) or not v or not isinstance(v[0], dict):
-                continue
-            if "time" in v[0]:
-                ok_nodes += 1
-            elif "error" in v[0]:
-                err_nodes += 1
-        total = ok_nodes + err_nodes
-
-        print("", flush = True)
-        if ok_nodes:
-            _public_reachable = True
-            print(
-                f"{ok_c}  Reachability check: {url}/ is reachable from the "
-                f"public internet ({ok_nodes}/{total} probe nodes connected).{reset}",
-                flush = True,
-            )
-        elif err_nodes:
-            _public_reachable = False
-            print(
-                f"{err_c}  Reachability check: {url}/ is NOT reachable from "
-                f"the public internet ({err_nodes}/{total} probe nodes failed).{reset}",
-                flush = True,
-            )
-            print(
-                f"{dim}    Usually a cloud firewall (AWS security group, "
-                f"GCP firewall / Azure NSG rule) or home router isn't "
-                f"allowing inbound TCP {port}.{reset}",
-                flush = True,
-            )
-            print(
-                f"{dim}    No firewall change needed -- SSH local-forward "
-                f"from your own computer:{reset}",
-                flush = True,
-            )
-            print(
-                f"{dim}        ssh -L {port}:localhost:{port} <user>@{display_host}{reset}",
-                flush = True,
-            )
-            print(
-                f"{dim}    then open http://localhost:{port}/ in your browser.{reset}",
-                flush = True,
-            )
-            local_url = _working_local_url(port)
-            if local_url:
-                print(
-                    f"{local_url_c}  You can access Unsloth Studio locally "
-                    f"in the meantime: {local_url}{reset}",
-                    flush = True,
-                )
-        else:
-            print(
-                f"{warn_c}  Reachability check: probe nodes did not respond "
-                f"in time -- could not verify {url}/.{reset}",
-                flush = True,
-            )
-    except urllib.error.URLError:
-        pass
-    except Exception:
-        pass
 
 
 def _display_host_for_bind(host: str) -> str:

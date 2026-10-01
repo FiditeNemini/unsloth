@@ -12,7 +12,7 @@ reads a truncated tag and passes over the very regression it exists to catch.
 tests/conftest.py puts this directory on sys.path for everything under tests/, which is what
 lets both callers share one implementation rather than each growing a private copy.
 
-The behaviour is pinned by test_update_release_notes.py::test_the_class_anchors_do_not_depend_on_any_order,
+The behaviour is pinned by tests/studio/test_update_release_notes.py::test_the_class_anchors_do_not_depend_on_any_order,
 which covers a comparison before the test id, an arrow function after it, attributes on
 either side of className, comments holding apostrophes and unmatched braces, and a `//`
 inside a URL literal that is not a comment.

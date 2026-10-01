@@ -13,7 +13,6 @@ from typing import Any, Callable, Optional
 
 import structlog
 
-from utils.auth_safe import auth_safe_open
 from utils.update_status import update_checks_disabled
 
 logger = structlog.get_logger(__name__)
@@ -63,7 +62,9 @@ def read_install_marker(
 
 def cache_path_for(repo: str, cache_dir: Path) -> Path:
     safe = repo.replace("/", "__")
-    return cache_dir / f"{safe}.json"
+    # v2: caches written while releases were still fetched from GitHub are never read, or their
+    # last-good tag would keep raising an update banner now that nothing can replace it.
+    return cache_dir / f"{safe}.v2.json"
 
 
 def load_disk_cache(repo: str, cache_dir: Path) -> Optional[tuple[float, Optional[str]]]:
@@ -95,66 +96,10 @@ def save_disk_cache(
         logger.debug(log_message, repo = repo, error = str(exc))
 
 
-def _fetch_newest_published_release(
-    repo: str, timeout: float, *, log_message: str
-) -> Optional[dict]:
-    """Newest published release object for `repo`, bounded by a wall-clock deadline. Not redundant with `timeout`: urllib applies that per address, so a host whose leading addresses blackhole pays it once for each, and /api/inference/status reads this, so that multiplication becomes the route's response time."""
-    from utils.utils import call_with_deadline
-    try:
-        return call_with_deadline(
-            lambda: _fetch_newest_published_release_blocking(
-                repo, timeout, log_message = log_message
-            ),
-            timeout + 1,
-            name = "prebuilt-freshness-fetch",
-        )
-    except TimeoutError as exc:
-        logger.debug(log_message, repo = repo, error = str(exc))
-        return None
-
-
-def _fetch_newest_published_release_blocking(
-    repo: str, timeout: float, *, log_message: str
-) -> Optional[dict]:
-    """Newest published (non-draft, non-prerelease) release object for `repo`, by ``published_at``. Resolves "latest" the way the installers do, NOT via GitHub's ``/releases/latest`` pointer, which sorts by commit date and can lag the build the installer installs, making detection and apply disagree (the downgrade / sticky-banner bug). None on any failure (offline, rate-limited)."""
-    import os
-    import urllib.error
-    import urllib.request
-
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=30"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "unsloth-studio-freshness-check",
-    }
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers = headers)
-    try:
-        with auth_safe_open(req, timeout = timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (
-        urllib.error.URLError,
-        urllib.error.HTTPError,
-        OSError,
-        json.JSONDecodeError,
-    ) as exc:
-        logger.debug(log_message, repo = repo, error = str(exc))
-        return None
-    if not isinstance(data, list):
-        return None
-    published = [
-        r
-        for r in data
-        if isinstance(r, dict)
-        and not r.get("draft")
-        and not r.get("prerelease")
-        and isinstance(r.get("tag_name"), str)
-        and r.get("tag_name")
-    ]
-    if not published:
-        return None
-    return max(published, key = lambda r: r.get("published_at") or "")
+# Release lookups never leave this machine: the two fetchers below are the only code that
+# reached GitHub, and they now always answer "unknown" (None), which every caller already treats
+# as "no update, no banner". The caching above them is unchanged, so an injected fetcher (tests)
+# still flows through it.
 
 
 def fetch_latest_release_tag(
@@ -163,9 +108,7 @@ def fetch_latest_release_tag(
     *,
     log_message: str,
 ) -> Optional[str]:
-    """Newest published release tag for `repo`, by publish time. None on failure."""
-    newest = _fetch_newest_published_release(repo, timeout, log_message = log_message)
-    return newest["tag_name"] if newest else None
+    return None
 
 
 def fetch_latest_release_assets(
@@ -174,16 +117,7 @@ def fetch_latest_release_assets(
     *,
     log_message: str,
 ) -> Optional[dict[str, int]]:
-    """Asset name -> size (bytes) for the newest published release of `repo`, selected exactly like fetch_latest_release_tag. None on any failure."""
-    newest = _fetch_newest_published_release(repo, timeout, log_message = log_message)
-    if newest is None:
-        return None
-    assets: dict[str, int] = {}
-    for a in newest.get("assets") or []:
-        name, size = a.get("name"), a.get("size")
-        if isinstance(name, str) and isinstance(size, int):
-            assets[name] = size
-    return assets
+    return None
 
 
 def latest_published_release(

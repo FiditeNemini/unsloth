@@ -2998,13 +2998,8 @@ def patch_ipykernel_hf_xet():
 
 
 def patch_trackio():
-    # Customize the Trackio dashboard for experiment tracking; see unslothai/notebooks#110.
-    os.environ["TRACKIO_LOGO_LIGHT_URL"] = (
-        "https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20black%20text.png"
-    )
-    os.environ["TRACKIO_LOGO_DARK_URL"] = (
-        "https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20white%20text.png"
-    )
+    # Customize the Trackio dashboard for experiment tracking; see unslothai/notebooks#110. No remote
+    # logo: the dashboard would load it from GitHub every time it is opened.
     os.environ["TRACKIO_PLOT_ORDER"] = "train/reward"
 
 

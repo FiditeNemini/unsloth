@@ -1,13 +1,6 @@
 import unittest
-from unittest.mock import patch
 from unsloth.models.loader_utils import get_model_name
-from unsloth.models import loader_utils
 from unsloth.models.mapper import FLOAT_TO_INT_MAPPER, MAP_TO_UNSLOTH_16bit
-
-
-def _no_remote_mapper():
-    # int_to_float, float_to_int, map_to_16bit, fp8_block, fp8_row
-    return {}, {}, {}, {}, {}
 
 
 class TestGetModelName(unittest.TestCase):
@@ -19,7 +12,6 @@ class TestGetModelName(unittest.TestCase):
         else:
             self.assertEqual(mapped.lower(), model_name.lower())
 
-    @patch.object(loader_utils, "_get_new_mapper", _no_remote_mapper)
     def test_resolution_matrix(self):
         cases = [
             ("meta-llama/Llama-2-7b-hf", True, "unsloth/llama-2-7b-bnb-4bit", True),

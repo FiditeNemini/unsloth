@@ -5,19 +5,13 @@
 
 from __future__ import annotations
 
-import http.client
-import json
-import os
 import re
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Optional
 
 import structlog
 
-from utils.auth_safe import auth_safe_open
 from utils.prebuilt.freshness_flow import (
     RELEASE_CACHE_TTL_SECONDS,
     RELEASE_FAILURE_CACHE_TTL_SECONDS,
@@ -28,8 +22,6 @@ logger = structlog.get_logger(__name__)
 MAX_CHANGES = 50
 # The only repo whose notes this module can read: generated, cumulative, one bullet per carried PR. --published-repo can point elsewhere, and a per-release body says nothing about what is still carried.
 CUMULATIVE_NOTES_REPO = "unslothai/llama.cpp"
-# A release body is a few KB; the cap only bounds a far side that misbehaves.
-MAX_RELEASE_BYTES = 4 * 1024 * 1024
 # Without a floor, a held-down Retry is two uncached GitHub calls per click.
 FORCE_REFRESH_MIN_INTERVAL_SECONDS = 30.0
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -63,55 +55,8 @@ def _fetch_release(
     tag: str,
     timeout: float = 5.0,
 ) -> Optional[dict]:
-    """One exact GitHub release. None on invalid input or any failure."""
-    if not _valid_repo(repo) or not tag:
-        return None
-    from utils.utils import call_with_deadline
-
-    try:
-        return call_with_deadline(
-            lambda: _fetch_release_blocking(repo, tag, timeout),
-            timeout + 1,
-            name = "llama-changelog-fetch",
-        )
-    except TimeoutError as exc:
-        logger.debug("llama changelog fetch failed", repo = repo, tag = tag, error = str(exc))
-        return None
-
-
-def _fetch_release_blocking(repo: str, tag: str, timeout: float) -> Optional[dict]:
-    encoded_tag = urllib.parse.quote(tag, safe = "")
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "unsloth-studio-llama-changelog",
-    }
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/releases/tags/{encoded_tag}",
-        headers = headers,
-    )
-    try:
-        with auth_safe_open(request, timeout = timeout) as response:
-            # One byte past the cap: reject an oversized body without buffering it.
-            raw = response.read(MAX_RELEASE_BYTES + 1)
-        if len(raw) > MAX_RELEASE_BYTES:
-            logger.debug("llama changelog release too large", repo = repo, tag = tag)
-            return None
-        payload = json.loads(raw.decode("utf-8"))
-    except (
-        urllib.error.URLError,
-        urllib.error.HTTPError,
-        OSError,
-        # A truncated read raises HTTPException, which is not an OSError.
-        http.client.HTTPException,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-    ) as exc:
-        logger.debug("llama changelog fetch failed", repo = repo, tag = tag, error = str(exc))
-        return None
-    return payload if isinstance(payload, dict) else None
+    """Release notes are never fetched: Studio does not contact GitHub. None means "unavailable"."""
+    return None
 
 
 def _release_for_tag(

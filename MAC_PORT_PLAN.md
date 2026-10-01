@@ -83,9 +83,31 @@ service that its call site raises `NetworkDisabledError` when off. An end-to-end
 Studio under `sandbox-exec` with a deny-network profile (loopback allowed) and exercises load,
 chat, train, export on a local model.
 
-## Phase 2 — Remove telemetry and phone-home
+## Phase 2 — Remove telemetry and phone-home — done
 
-Delete outright (not gate):
+**Status.** Removed: the HF usage-statistics ping; the GitHub `mapper.py` refresh; the PyPI
+update check and GitHub release-notes fetch (routes keep their shape, always "no update");
+every GitHub release lookup behind llama.cpp/whisper.cpp freshness and the changelog (the two
+fetchers in `utils/prebuilt/freshness_flow.py` answer "unknown"; caches from the fetching era
+are ignored); the startup freshness check; the latest-transformers PyPI/GitHub probe; the
+public-IP lookups (`ifconfig.me`, GCE metadata) and the **check-host.net** reachability probe
+(it sent your public IP:port to a third party; missed by the first inventory); the Xet
+reachability probe; the ROCm wheel-index probe; the `chat.cpp` fetch (now read from the
+installed llama.cpp source tree); Trackio's remote logos; and the CLI's fallback that
+downloaded `unsloth.ai/install.sh` and piped it into bash (it would have replaced this fork
+with upstream).
+
+Deferred, by design:
+- In-app llama.cpp/whisper.cpp updater and backend switch (`utils/llama_cpp_update.py`,
+  `routes/llama.py`, `routes/whisper.py`, ~14 frontend files): now inert (it can never find a
+  release) but its apply endpoint would install a prebuilt over the Metal source build if
+  called directly. **First item of Phase 4.**
+- Tauri auto-updater: Phase 5 (Rust shell + desktop update UI). The installed
+  `/Applications/Unsloth.app` is upstream's build and still polls GitHub until rebuilt.
+- CLI processes do not activate the network policy yet, and `unsloth start <model>` /
+  `unsloth start hermes` reach HF/GitHub: Phase 3.
+
+Original list:
 
 | What | Where |
 |---|---|

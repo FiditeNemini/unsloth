@@ -10,7 +10,6 @@ fail-open behaviour on missing data.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import types as _types
@@ -276,7 +275,7 @@ def test_latest_published_release_keeps_old_cache_on_transient_failure(monkeypat
     # Disk entry older than TTL + network fail -> return cached value.
     cache_dir = tmp_path / ".freshness"
     cache_dir.mkdir()
-    cache_file = cache_dir / "unslothai__llama.cpp.json"
+    cache_file = cache_dir / "unslothai__llama.cpp.v2.json"
     yesterday = time.time() - 25 * 60 * 60  # > 24h
     cache_file.write_text(json.dumps({"fetched_at": yesterday, "latest_tag": "b9000"}))
     calls = []
@@ -502,46 +501,6 @@ def test_check_prebuilt_freshness_downgrade_guard(monkeypatch, tmp_path):
     assert info["stale"] is False
 
 
-def test_fetch_latest_release_tag_uses_publish_time(monkeypatch):
-    # Resolves newest by published_at (like the installer), skips drafts/prereleases,
-    # and does NOT just take GitHub's first/`/releases/latest` item.
-    class _Resp:
-        def __init__(self, payload):
-            self._p = json.dumps(payload).encode()
-
-        def read(self):
-            return self._p
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    payload = [
-        {
-            "tag_name": "b9518",
-            "draft": False,
-            "prerelease": False,
-            "published_at": "2026-06-04T21:11:19Z",
-        },
-        {
-            "tag_name": "b9596-mix-e6f2453",
-            "draft": False,
-            "prerelease": False,
-            "published_at": "2026-06-11T22:50:41Z",
-        },
-        {
-            "tag_name": "b9999-draft",
-            "draft": True,
-            "prerelease": False,
-            "published_at": "2026-06-12T00:00:00Z",
-        },
-    ]
-    monkeypatch.setattr(freshness_flow, "auth_safe_open", lambda req, timeout = 5.0: _Resp(payload))
-    assert fr._fetch_latest_release_tag("unslothai/llama.cpp") == "b9596-mix-e6f2453"
-
-
 # reset_caches(drop_disk=...) -- post-update stale same-base mix disk cache.
 
 
@@ -549,7 +508,7 @@ def _seed_disk_cache(tmp_path: Path, latest_tag: str) -> Path:
     # Matches _cache_path_for under the fixture's stubbed _cache_dir.
     cache_dir = tmp_path / ".freshness"
     cache_dir.mkdir(exist_ok = True)
-    cache_file = cache_dir / "unslothai__llama.cpp.json"
+    cache_file = cache_dir / "unslothai__llama.cpp.v2.json"
     cache_file.write_text(json.dumps({"fetched_at": time.time(), "latest_tag": latest_tag}))
     return cache_file
 
@@ -740,18 +699,25 @@ def test_update_size_missing_inputs_fail_open(monkeypatch):
     assert fr.update_download_size_bytes({"asset": None}, "b9300", "unslothai/llama.cpp") is None
 
 
-@pytest.mark.parametrize("fetch", ["_fetch_latest_release_tag", "_fetch_latest_release_assets"])
-def test_release_fetch_cannot_outlive_its_deadline(monkeypatch, fetch):
-    """urllib applies its timeout per address, so /api/inference/status inherits that
-    multiplication without a wall-clock deadline; one stalled connect stands in for the
-    walk. Both entry points, since they share the fetch."""
 
-    def _stalls(req, timeout = 5.0):
-        time.sleep(30)  # never returns within the deadline
-        raise AssertionError("deadline did not cut the fetch short")
 
-    monkeypatch.setattr(freshness_flow, "auth_safe_open", _stalls)
-    started = time.monotonic()
-    assert getattr(fr, fetch)("unslothai/llama.cpp", timeout = 0.25) is None
-    # Pins the implemented timeout + 1, not merely "faster than the 30s stall".
-    assert time.monotonic() - started < 2.0
+def test_release_lookups_never_reach_the_network(monkeypatch):
+    """The fetchers behind every freshness answer: always "unknown", without a connection."""
+    import socket
+    import urllib.request
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a release lookup touched the network")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    assert freshness_flow.fetch_latest_release_tag("unslothai/llama.cpp", log_message = "x") is None
+    assert freshness_flow.fetch_latest_release_assets("unslothai/llama.cpp", log_message = "x") is None
+
+
+def test_a_cache_from_the_fetching_era_is_ignored(tmp_path):
+    """A last-good tag cached before lookups were removed would raise an update banner forever."""
+    (tmp_path / "unslothai__llama.cpp.json").write_text(
+        json.dumps({"fetched_at": time.time(), "latest_tag": "b99999"})
+    )
+    assert freshness_flow.load_disk_cache("unslothai/llama.cpp", tmp_path) is None

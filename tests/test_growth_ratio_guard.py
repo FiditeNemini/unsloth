@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved. See /studio/LICENSE.AGPL-3.0
 
-"""The linearity guard four tests hand their verdict to, checked on paths whose cost is known.
+"""The linearity guard three tests hand their verdict to, checked on paths whose cost is known.
 
-`assert_linear` decides `test_update_release_notes.py`, `test_tool_xml_strip.py`,
-`test_rag_store.py` and `test_pr5624_regressions.py`. It is a timing guard, so both of its
+`assert_linear` decides `test_tool_xml_strip.py`, `test_rag_store.py` and
+`test_pr5624_regressions.py`. It is a timing guard, so both of its
 failure modes are silent: too loose and a quadratic path ships, too tight and an unrelated
 branch goes red for someone else's load. tests/_shared/growth.py's own docstring records the
 second one happening three times, and it happened again on unslothai/unsloth#11152 at 7.2x
