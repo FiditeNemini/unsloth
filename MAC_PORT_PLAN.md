@@ -37,9 +37,25 @@ What already exists for Mac, and is the foundation:
 
 ---
 
-## Phase 1 — Network policy module (foundation)
+## Phase 1 — Network policy module (foundation) — done
 
 Everything later depends on a single place that answers "may this process talk to X?".
+
+**Status.** Built as planned, with these specifics:
+- `unsloth_network_policy` is a stdlib-only **top-level** module shipped in the zoo
+  distribution (`py-modules`), so Studio's light parent imports it without running
+  `unsloth_zoo/__init__.py`, which activates it first thing.
+- Studio: `utils/network_policy_settings.py` stores it under `app_settings.network_policy` in
+  the owner's `studio.db`; `main.py` applies it before anything imports HF libraries, and the
+  **stored value beats an inherited `UNSLOTH_NETWORK_POLICY`**. Every spawned worker goes
+  through `utils/native_path_leases.run_without_native_path_secret`, which activates it and
+  fails closed if the module is missing.
+- API: `GET /api/settings/network-policy` (everyone), `PUT` (owner, UI session only — an
+  API key gets 403). UI: Settings → General → Network access (master switch, a switch per
+  service, and "Local network").
+- `--local` installs take zoo from `external/unsloth-zoo`, editable.
+- Not yet: the `sandbox-exec` end-to-end smoke test, and the per-service `require()` calls
+  (Phase 3). Subprocesses (git, curl, llama-server) are outside the socket guard.
 
 **Design**
 - New `unsloth_zoo/network_policy.py` (lowest layer: both `unsloth` and Studio depend on zoo).

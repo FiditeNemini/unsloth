@@ -10,7 +10,7 @@ RULE=$(printf '\342\224\200%.0s' {1..52})
 
 # ── Parse flags ──
 # --local: install from the local repo checkout (overlays unsloth as editable
-# and unsloth-zoo from git main). Mirrors install.sh --local for the Colab
+# and unsloth-zoo from the external/unsloth-zoo submodule). Mirrors install.sh --local for the Colab
 # path that runs setup.sh directly without going through install.sh.
 # ── Parse flags ──
 if [ "$#" -gt 0 ]; then
@@ -992,7 +992,7 @@ if [ "$_LLAMA_ONLY" = "1" ]; then
     substep "llama.cpp only mode"
 fi
 if [ "${STUDIO_LOCAL_INSTALL:-0}" = "1" ]; then
-    substep "local mode: overlaying $REPO_ROOT (editable) + unsloth-zoo from git main"
+    substep "local mode: overlaying $REPO_ROOT (editable) + unsloth-zoo from external/unsloth-zoo (editable)"
 fi
 # ── Clean up stale caches ──
 rm -rf "$REPO_ROOT/unsloth_compiled_cache"

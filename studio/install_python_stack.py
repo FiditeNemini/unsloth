@@ -7877,7 +7877,15 @@ def _shared_base_requirements() -> Path | None:
     return None
 
 
-_UNSLOTH_ZOO_GIT_URL = "unsloth-zoo @ git+https://github.com/unslothai/unsloth-zoo"
+_UNSLOTH_ZOO_GIT_URL = "unsloth-zoo @ git+https://github.com/FiditeNemini/unsloth-zoo"
+# The fork's zoo, checked out as a submodule of the repo the --local overlay installs.
+_UNSLOTH_ZOO_SUBMODULE = os.path.join("external", "unsloth-zoo")
+
+
+def _local_unsloth_zoo_dir(local_repo: str) -> str | None:
+    """The submodule checkout under ``local_repo``, if it is initialised."""
+    path = os.path.join(local_repo, _UNSLOTH_ZOO_SUBMODULE)
+    return path if os.path.isfile(os.path.join(path, "pyproject.toml")) else None
 
 
 def _unsloth_zoo_ref() -> str:
@@ -7918,6 +7926,12 @@ def _overlay_local_core_package(
         step_label = f"overlaying local repo (editable): {local_repo}"
         install_label = "Overlaying local repo (editable)"
         args = ("-e", local_repo)
+    elif canonical == "unsloth-zoo" and _local_unsloth_zoo_dir(local_repo):
+        # The submodule, editable, so zoo changes take effect without a push or reinstall.
+        zoo_dir = _local_unsloth_zoo_dir(local_repo)
+        step_label = f"overlaying unsloth-zoo (editable): {zoo_dir}"
+        install_label = "Overlaying unsloth-zoo (editable)"
+        args = ("--force-reinstall", "-e", zoo_dir)
     elif canonical == "unsloth-zoo":
         zoo_ref = _unsloth_zoo_ref()
         step_label = f"overlaying unsloth-zoo from git {zoo_ref}"

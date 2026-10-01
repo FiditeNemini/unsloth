@@ -257,6 +257,13 @@ from utils.hf_endpoint import normalize_hf_endpoint_env as _normalize_hf_endpoin
 _normalize_hf_endpoint_env()
 del _normalize_hf_endpoint_env
 
+# Network policy from the owner's studio.db, before anything imports a library that reads the
+# HF offline variables at import time. Every worker spawned later inherits it.
+from utils.network_policy_settings import activate_stored_policy as _activate_network_policy
+
+_activate_network_policy()
+del _activate_network_policy
+
 # The studio bundles unsloth_zoo; declare unsloth present (as `import unsloth` does) so its
 # lazy submodule imports and the DiffusionGemma runner don't trip the install guard.
 os.environ.setdefault("UNSLOTH_IS_PRESENT", "1")

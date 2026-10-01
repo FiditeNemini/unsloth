@@ -130,6 +130,11 @@ def run_without_native_path_secret(
         except Exception:
             pass
 
+    # The parent's network policy arrives in the environment; enforce it before the target imports
+    # anything. Not guarded: a worker that cannot enforce the policy must not run.
+    import unsloth_network_policy
+    unsloth_network_policy.activate()
+
     # Runs in the spawned child to bind it to the parent's death, since multiprocessing children get no
     # preexec_fn. Shared entrypoint for the inference/export/training/data-recipe workers. Two try
     # blocks, because allow_child_processes is the newer name: on an older process_lifetime.py a

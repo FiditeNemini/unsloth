@@ -146,6 +146,11 @@ from utils.managed_provider_url_settings import (
     private_urls_locked_by_environment,
     set_managed_private_provider_urls_allowed,
 )
+from utils.network_policy_settings import (
+    get_network_policy,
+    service_catalog,
+    set_network_policy,
+)
 from utils.current_date_prompt_settings import (
     DEFAULT_CURRENT_DATE_PROMPT_ENABLED,
     get_current_date_prompt_enabled,
@@ -3469,6 +3474,81 @@ def update_current_date_prompt(
         "settings.current_date_prompt_updated subject=%s enabled=%s", current_subject, enabled
     )
     return CurrentDatePromptResponse(enabled = enabled)
+
+
+class NetworkServiceInfo(BaseModel):
+    id: str
+    label: str
+    description: str
+
+
+class NetworkPolicyPayload(BaseModel):
+    enabled: StrictBool
+    services: dict[str, StrictBool]
+    allow_lan: StrictBool = False
+
+
+class NetworkPolicyResponse(BaseModel):
+    enabled: bool
+    services: dict[str, bool]
+    allow_lan: bool
+    catalog: list[NetworkServiceInfo]
+    # Workers read the policy when they start; a change reaches models and jobs started after it.
+    applies_to_running_jobs: bool = False
+
+
+def _network_policy_response(policy) -> NetworkPolicyResponse:
+    catalog = service_catalog()
+    return NetworkPolicyResponse(
+        enabled = policy.enabled,
+        services = {entry["id"]: entry["id"] in policy.services for entry in catalog},
+        allow_lan = policy.allow_lan,
+        catalog = [NetworkServiceInfo(**entry) for entry in catalog],
+    )
+
+
+def _require_ui_session_for_network(via_api_key: bool = Depends(authenticated_via_api_key)) -> None:
+    """An API key must not be able to open the network for the whole install."""
+    if via_api_key:
+        raise HTTPException(
+            status_code = 403,
+            detail = "Network access can only be changed from the Unsloth UI.",
+        )
+
+
+@_shared_settings_router.get("/network-policy", response_model = NetworkPolicyResponse)
+def get_network_policy_settings(
+    current_subject: str = Depends(get_current_subject),
+) -> NetworkPolicyResponse:
+    return _network_policy_response(get_network_policy())
+
+
+@_owner_settings_router.put("/network-policy", response_model = NetworkPolicyResponse)
+def update_network_policy_settings(
+    payload: NetworkPolicyPayload,
+    current_subject: str = Depends(get_current_subject),
+    _ui_session: None = Depends(_require_ui_session_for_network),
+) -> NetworkPolicyResponse:
+    try:
+        policy = set_network_policy(
+            enabled = payload.enabled, services = payload.services, allow_lan = payload.allow_lan
+        )
+    except ValueError as exc:
+        raise log_and_http_error(
+            exc,
+            400,
+            safe_error_detail(exc, fallback = "Invalid network policy."),
+            event = "settings.update_network_policy_failed",
+            log = logger,
+        ) from exc
+    logger.info(
+        "settings.network_policy_updated subject=%s enabled=%s services=%s allow_lan=%s",
+        current_subject,
+        policy.enabled,
+        ",".join(sorted(policy.services)) or "-",
+        policy.allow_lan,
+    )
+    return _network_policy_response(policy)
 
 
 def _require_ui_session_for_keyless(via_api_key: bool = Depends(authenticated_via_api_key)) -> None:
