@@ -51,10 +51,14 @@ STUDIO_HOME="$(_root_value "${UNSLOTH_HOME:-}")"
 [ -n "$STUDIO_HOME" ] || STUDIO_HOME="$(_root_value "$_STUDIO_HOME_ALIAS")"
 CUSTOM_STUDIO_HOME=false
 if [ -n "$STUDIO_HOME" ]; then
-    CUSTOM_STUDIO_HOME=true
     INSTALL_DIR="$STUDIO_HOME/whisper.cpp"
 else
     INSTALL_DIR="$HOME/.unsloth/whisper.cpp"
+fi
+# setup.sh always passes UNSLOTH_HOME, even when it is the default; only a home elsewhere is
+# custom (and so needs the ownership marker before anything in it is replaced).
+if [ "${INSTALL_DIR%/}" != "$HOME/.unsloth/whisper.cpp" ]; then
+    CUSTOM_STUDIO_HOME=true
 fi
 
 command -v git >/dev/null 2>&1 || { echo "ERROR: git is required" >&2; exit 1; }

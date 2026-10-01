@@ -3034,7 +3034,7 @@ _check_macos_deps() {
     if [ "$STUDIO_LOCAL_INSTALL" = true ] && ! _has_working_git; then
         echo ""
         step "deps" "git is required for --local installs" "$C_ERR"
-        substep "--local installs unsloth-zoo from git+https://github.com/unslothai/unsloth-zoo,"
+        substep "--local installs unsloth-zoo from git+https://github.com/FiditeNemini/unsloth-zoo (unless external/unsloth-zoo is checked out),"
         substep "which needs a working git. Install the Xcode Command Line Tools:"
         substep "  xcode-select --install"
         substep "Then re-run this script. A normal (non---local) install needs no compiler"
@@ -3077,7 +3077,7 @@ _check_linux_deps() {
     if [ "$STUDIO_LOCAL_INSTALL" = true ] && ! _has_working_git; then
         echo ""
         step "deps" "git is required for --local installs" "$C_ERR"
-        substep "--local installs unsloth-zoo from git+https://github.com/unslothai/unsloth-zoo,"
+        substep "--local installs unsloth-zoo from git+https://github.com/FiditeNemini/unsloth-zoo (unless external/unsloth-zoo is checked out),"
         substep "which needs git. Install it with your package manager, then re-run."
         substep "A normal (non---local) install needs no git and no compiler."
         return 1
@@ -3841,9 +3841,20 @@ case "$0" in
         [ "$STUDIO_LOCAL_INSTALL" = true ] && [ -r "$0" ] && _REPO_IS_CHECKOUT=1 ;;
 esac
 
-# Honor UNSLOTH_ZOO_REF so the Studio venv tracks the requested zoo (the Docker publish workflow forwards one ref to both builds). Unset means main.
-_ZOO_REF="${UNSLOTH_ZOO_REF:-main}"
-_ZOO_GIT_SPEC="unsloth-zoo @ git+https://github.com/unslothai/unsloth-zoo@${_ZOO_REF}"
+# Honor UNSLOTH_ZOO_REF so the Studio venv tracks the requested zoo (the Docker publish workflow forwards one ref to both builds). Unset means mac-hardening.
+_ZOO_REF="${UNSLOTH_ZOO_REF:-mac-hardening}"
+_ZOO_GIT_SPEC="unsloth-zoo @ git+https://github.com/FiditeNemini/unsloth-zoo@${_ZOO_REF}"
+# A checkout's own zoo (the external/unsloth-zoo submodule) wins, editable, so zoo changes take
+# effect without a push. _ZOO_EDITABLE stays unquoted at the call sites: "-e" or nothing.
+if [ -f "$_REPO_ROOT/external/unsloth-zoo/pyproject.toml" ] && [ -z "${UNSLOTH_ZOO_REF:-}" ]; then
+    _ZOO_EDITABLE="-e"
+    _ZOO_SPEC="$_REPO_ROOT/external/unsloth-zoo"
+    _ZOO_SOURCE="external/unsloth-zoo (editable)"
+else
+    _ZOO_EDITABLE=""
+    _ZOO_SPEC="$_ZOO_GIT_SPEC"
+    _ZOO_SOURCE="git ${_ZOO_REF}"
+fi
 
 # ── Helper: find no-torch-runtime.txt (local repo or site-packages) ──
 _find_no_torch_runtime() {
@@ -7037,10 +7048,10 @@ if [ "$_MIGRATED" = true ]; then
     if [ "$STUDIO_LOCAL_INSTALL" = true ]; then
         substep "overlaying local repo (editable)..."
         run_install_cmd "overlay local repo" uv pip install --python "$_VENV_PY" -e "$_REPO_ROOT" --no-deps
-        substep "overlaying unsloth-zoo from git ${_ZOO_REF}..."
-        run_install_cmd_retry "overlay unsloth-zoo (git ${_ZOO_REF})" uv pip install --python "$_VENV_PY" \
+        substep "overlaying unsloth-zoo from ${_ZOO_SOURCE}..."
+        run_install_cmd_retry "overlay unsloth-zoo (${_ZOO_SOURCE})" uv pip install --python "$_VENV_PY" \
             --no-deps --reinstall-package unsloth-zoo \
-            "$_ZOO_GIT_SPEC"
+            $_ZOO_EDITABLE "$_ZOO_SPEC"
     fi
     if [ "$SKIP_TORCH" = false ] && [ "$_torch_index_is_rocm_family" = true ]; then
         if _is_gfx906_bnb_skip; then
@@ -7249,10 +7260,10 @@ elif [ -n "$TORCH_INDEX_URL" ]; then
         if [ "$STUDIO_LOCAL_INSTALL" = true ]; then
             substep "overlaying local repo (editable)..."
             run_install_cmd "overlay local repo" uv pip install --python "$_VENV_PY" -e "$_REPO_ROOT" --no-deps
-            substep "overlaying unsloth-zoo from git ${_ZOO_REF}..."
-            run_install_cmd_retry "overlay unsloth-zoo (git ${_ZOO_REF})" uv pip install --python "$_VENV_PY" \
+            substep "overlaying unsloth-zoo from ${_ZOO_SOURCE}..."
+            run_install_cmd_retry "overlay unsloth-zoo (${_ZOO_SOURCE})" uv pip install --python "$_VENV_PY" \
                 --no-deps --reinstall-package unsloth-zoo \
-                "$_ZOO_GIT_SPEC"
+                $_ZOO_EDITABLE "$_ZOO_SPEC"
         fi
     elif [ "$STUDIO_LOCAL_INSTALL" = true ]; then
         run_install_cmd_retry "install unsloth (local)" uv pip install --python "$_VENV_PY" \
@@ -7260,10 +7271,10 @@ elif [ -n "$TORCH_INDEX_URL" ]; then
             --upgrade-package unsloth "$_unsloth_release_install_spec" "unsloth-zoo>=2026.9.7"
         substep "overlaying local repo (editable)..."
         run_install_cmd "overlay local repo" uv pip install --python "$_VENV_PY" -e "$_REPO_ROOT" --no-deps
-        substep "overlaying unsloth-zoo from git ${_ZOO_REF}..."
-        run_install_cmd_retry "overlay unsloth-zoo (git ${_ZOO_REF})" uv pip install --python "$_VENV_PY" \
+        substep "overlaying unsloth-zoo from ${_ZOO_SOURCE}..."
+        run_install_cmd_retry "overlay unsloth-zoo (${_ZOO_SOURCE})" uv pip install --python "$_VENV_PY" \
             --no-deps --reinstall-package unsloth-zoo \
-            "$_ZOO_GIT_SPEC"
+            $_ZOO_EDITABLE "$_ZOO_SPEC"
     else
         _unsloth_install_pkg="$PACKAGE_NAME"
         if [ "$PACKAGE_NAME" = "unsloth" ] && [ -n "$_unsloth_desktop_install_spec" ]; then
@@ -7291,10 +7302,10 @@ else
         run_install_cmd_retry "install unsloth (auto torch backend)" uv pip install --python "$_VENV_PY" "unsloth-zoo>=2026.9.7" "$_unsloth_release_install_spec" --torch-backend=auto
         substep "overlaying local repo (editable)..."
         run_install_cmd "overlay local repo" uv pip install --python "$_VENV_PY" -e "$_REPO_ROOT" --no-deps
-        substep "overlaying unsloth-zoo from git ${_ZOO_REF}..."
-        run_install_cmd_retry "overlay unsloth-zoo (git ${_ZOO_REF})" uv pip install --python "$_VENV_PY" \
+        substep "overlaying unsloth-zoo from ${_ZOO_SOURCE}..."
+        run_install_cmd_retry "overlay unsloth-zoo (${_ZOO_SOURCE})" uv pip install --python "$_VENV_PY" \
             --no-deps --reinstall-package unsloth-zoo \
-            "$_ZOO_GIT_SPEC"
+            $_ZOO_EDITABLE "$_ZOO_SPEC"
     else
         case "$PACKAGE_NAME" in
             unsloth)

@@ -5236,7 +5236,12 @@ elif [ "$_HOST_SYSTEM" = "Darwin" ]; then
     if [ ! -f "$_WHISPER_BUILD" ] || ! command -v cmake >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
         step "whisper.cpp" "skipped (needs git, cmake and scripts/build_whisper_cpp.sh); browser and Transformers dictation remain available" "$C_WARN"
     else
-        rm -f "$WHISPER_CPP_DIR/UNSLOTH_WHISPER_PREBUILT_INFO.json" 2>/dev/null || true
+        # A tree the prebuilt installer wrote is Unsloth's own: say so in the form the source
+        # build checks for, before dropping the prebuilt marker it no longer describes.
+        if [ -f "$WHISPER_CPP_DIR/UNSLOTH_WHISPER_PREBUILT_INFO.json" ]; then
+            : > "$WHISPER_CPP_DIR/$_STUDIO_OWNED_MARKER" 2>/dev/null || true
+            rm -f "$WHISPER_CPP_DIR/UNSLOTH_WHISPER_PREBUILT_INFO.json" 2>/dev/null || true
+        fi
         if run_quiet_no_exit "whisper.cpp source build" \
                 env UNSLOTH_HOME="$UNSLOTH_HOME" sh "$_WHISPER_BUILD"; then
             step "whisper.cpp" "built (Metal)"
